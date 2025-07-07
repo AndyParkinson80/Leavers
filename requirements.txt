@@ -1,0 +1,12 @@
+pandas
+requests
+openpyxl
+google-cloud-storage
+google-cloud-bigquery
+google_auth_oauthlib
+matplotlib
+numpy
+google-cloud-secret-manager
+Pathlib
+pyarrow
+db-dtypes
