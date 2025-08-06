@@ -1,2 +1,3 @@
-Data Store/
+Data Store/*
+!Data Store/.gitkeep
 .venv/

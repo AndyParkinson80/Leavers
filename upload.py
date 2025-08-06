@@ -8,11 +8,7 @@ import datetime
 import tarfile
 
 # Control flag
-runGcloud = False
-
-#gcloud builds submit --tag europe-west2-docker.pkg.dev/api-integrations-412107/looker-files/daily_leavers_download:latest
-#gcloud run jobs update daily-leavers-download --image europe-west2-docker.pkg.dev/api-integrations-412107/looker-files/daily_leavers_download:latest --region europe-west2
-#gcloud run jobs execute daily-leavers-download --region europe-west2
+runGcloud = True
 
 # Configuration
 PROJECT_ID = os.environ.get("PROJECT_ID")

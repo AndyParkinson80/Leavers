@@ -22,8 +22,8 @@ from google.auth.exceptions import DefaultCredentialsError
 from google.oauth2 import service_account
 
 debug = True                                                           
-Data_export = True                                                                 #True --> export data to data store
-testing = True
+Data_export = False                                                                 #True --> export data to data store
+testing = False
 gcloud = True                                                                      #True --> Pulls all data from ADP WFN, not just current
 
 directory = Path(__file__).resolve().parent
@@ -432,9 +432,6 @@ def rearrange_cascade(cascade_responses, cascade_jobs_filter):
 
     output=[]
 
-    total = len(cascade_responses)
-    position = 1
-
     for entry in cascade_responses:
         Cascade_full = entry.get("Id")
         EndDate = entry.get("EmploymentLeftDate")
@@ -690,7 +687,6 @@ def looker_data_set(cascade):
 
     return df
 
-
 if __name__ == "__main__":
     #---------- Create authentification tokens
     try:
@@ -720,14 +716,12 @@ if __name__ == "__main__":
         }
     #---------- 
 
-
     if testing is False:
         hierarchyNodes          = hierarchy_nodes()
         cascade_responses       = GET_workers_cascade()
         cascade_jobs            = GET_jobs_cascade()
         cascade_jobs_filter     = filter_latest_jobs(cascade_jobs)
         cascade_data            = rearrange_cascade(cascade_responses,cascade_jobs_filter)
-        output_cascade()
 
     if testing is True:
         print ("Loading from saved file")
@@ -736,8 +730,7 @@ if __name__ == "__main__":
         cascade_jobs            = import_data("002a - Cascade jobs.json")
         cascade_jobs_filter     = import_data("002b - Cascade jobs - Latest.json")
         cascade_data            = import_data("004 - Cascade reordered.json")
-        output_cascade()    
     
-    
+    output_cascade()   
     looker_data = looker_data_set(cascade_data)     
 
