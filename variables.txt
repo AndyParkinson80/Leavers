@@ -1,3 +1,0 @@
-iris_client_id_USA: 33bd52e2-b12d-4174-be39-74158ac32f4b
-iris_client_secret_USA: 7ceaa68c-52df-487e-b5e1-017e7afb7cb5
-strings_to_exclude: {"DY1BURTSY","LLYI6DQAG"}

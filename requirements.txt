@@ -10,3 +10,4 @@ google-cloud-secret-manager
 Pathlib
 pyarrow
 db-dtypes
+google-api-python-client
