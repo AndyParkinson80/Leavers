@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import requests
 import math
@@ -11,8 +11,12 @@ from pathlib import Path
 import tempfile
 from collections import defaultdict
 import ast
+import openpyxl
+import re
+import pandas_gbq
 
-from google.cloud import secretmanager
+from google.cloud import secretmanager, bigquery
+
 from google.auth import default
 from google.auth.exceptions import DefaultCredentialsError
 from google.oauth2 import service_account
@@ -26,6 +30,14 @@ directory = Path(__file__).resolve().parent
 data_store = directory / "Data Store"
 
 columns_to_check = ['H1', 'H2', 'H3', 'H4', 'H5', 'H6']
+
+today = datetime.today()
+formatted_today = today.strftime("%Y-%m-%dT00:00:00Z")
+first_day_of_this_month = today.replace(day=1)
+last_day_of_last_month = first_day_of_this_month - timedelta(days=1)
+formatted_last_day = last_day_of_last_month.strftime("%Y-%m-%dT00:00:00Z")
+first_day_of_this_year = today.replace(day=1, month=1, hour=0, minute=0, second=0, microsecond=0)
+formatted_first_day = first_day_of_this_year.strftime("%Y-%m-%dT00:00:00Z")
 
 #---------- Create authentification tokens
 def google_auth():
@@ -162,6 +174,29 @@ def adp_bearer():
 
     #print (access_token)
     return access_token
+
+def adjust_column_widths(file_path,sheet=None):
+    wb = openpyxl.load_workbook(file_path)
+
+    if sheet is None:
+        ws = wb["Sheet1"]
+    else:
+        ws = wb[sheet]
+                                                                #Sets the widths of columns in a worksheet to fit
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column_letter  # Get the column name
+        for cell in col:
+            try:
+                text_length = len(str(cell.value))
+                if text_length > max_length:
+                    max_length = text_length
+            except:
+                pass
+        adjusted_width = (max_length + 2)
+        ws.column_dimensions[column].width = adjusted_width
+    
+    wb.save(file_path)
 
 #---------- 
 def export_data(filename,variable):
@@ -317,10 +352,25 @@ def GET_workers_cascade():
         if record.get('DisplayId') is not None and record["DisplayId"] not in cascadeId_to_drop
     ]
 
+    x_years_ago = datetime.now() - timedelta(days = 2*365)
+    filtered_records = []
+    for record in filtered_data:
+        employment_left_date = record.get('EmploymentLeftDate')
+        
+        if not employment_left_date:
+            filtered_records.append(record)
+            continue
+
+        left_date = datetime.fromisoformat(employment_left_date.replace('Z', '+00:00'))
+        left_date = left_date.replace(tzinfo=None)  # Remove timezone for comparison
+        
+        if left_date >= x_years_ago:
+            filtered_records.append(record)
+
     if debug:
-        export_data ("001 - cascade personal.json",filtered_data)
-    
-    return cascade_responses
+        export_data ("001 - cascade personal.json",filtered_records)
+
+    return filtered_records
 
 def GET_jobs_cascade():
     time_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -497,8 +547,6 @@ def rearrange_cascade(cascade_responses, cascade_jobs_filter):
             "LM_Path": lm_path
             }
 
-        print (f"Re-ordering Record for {KnownAs} {entry.get("LastName","")} - {position}/{total}")
-        position = position + 1
         output.append(cascade_reorder)
 
     # Sort the output
@@ -517,7 +565,7 @@ def rearrange_cascade(cascade_responses, cascade_jobs_filter):
     # Filter the output
     output = [
         record for record in output
-        if record["ContServiceDate"] is not None and record["Payroll"] is not None and datetime.strptime(record["ContServiceDate"], "%Y-%m-%dT%H:%M:%SZ") <= constants.today
+        if record["ContServiceDate"] is not None and record["Payroll"] is not None and datetime.strptime(record["ContServiceDate"], "%Y-%m-%dT%H:%M:%SZ") <= today
         ]
 
     if debug:
@@ -531,37 +579,93 @@ def output_cascade():
     df = pd.DataFrame(cascade_data)
 
     if Data_export:
-        file_path_excel = os.path.join(constants.dataDropExcel,"000 - Cascade staff (API).xlsx")
-        file_path_csv = os.path.join(constants.dataDropCsv,"000 - Cascade staff (API).csv")
-
+        file_path_excel = data_store / "000 - Cascade staff (API).xlsx"
+        file_path_csv = data_store / "000 - Cascade staff (API).csv"
 
         df.to_excel(file_path_excel, index=False)
         df.to_csv(file_path_csv, index=False)
 
-        functions.adjust_column_widths(file_path_excel)
+        adjust_column_widths(file_path_excel)
+
+def classify_jobs(df,hierarcy):
+        df['Category'] = df[hierarcy].apply(
+        lambda x: 'Ops' if pd.notna(x) and 'Operations' in x 
+        else ('Ops' if pd.notna(x) and 'Engineer' in x
+        else ('Ops' if pd.notna(x) and 'Install' in x
+        else ('Ops' if pd.notna(x) and 'Service' in x
+        else ('Ops' if pd.notna(x) and 'Logistics' in x
+        else ('Ops' if pd.notna(x) and 'Warehouse' in x
+            else ('Sales' if pd.notna(x) and 'Sales' in x
+            else ('Sales' if pd.notna(x) and ' to ' in x 
+                else ('Production' if pd.notna(x) and 'Production' in x 
+                    else 'Other')))))))))
+
+def voluntary(df,reason):
+    df['Voluntary'] = df[reason].apply(
+        lambda x: 'V' if pd.notna(x) and 'Resigned' in x
+        else ('V' if pd.notna(x) and 'AWOL' in x
+              else None))
+
+def extract_last_house(row):
+    last_number = None
+    for col in ['HierarchyLevel6', 'HierarchyLevel5', 'HierarchyLevel4', 
+                'HierarchyLevel3', 'HierarchyLevel2', 'HierarchyLevel1']:
+        match = re.search(r'\((\d+)\)', str(row[col]))
+        if match:
+            last_number = match.group(1)
+            break
+    return last_number
+
+def delete_table_data(project_id, dataset_id, table_id,client):
+    query = f"DELETE FROM `{project_id}.{dataset_id}.{table_id}` WHERE TRUE"
+    client.query(query).result()  # Executes the query
+    print(f"All rows deleted from {table_id}")
+
+def load_data(data, project_id, dataset_id, table_id,client):
+    df = pd.DataFrame(data)
+
+    table_ref = f"{project_id}.{dataset_id}.{table_id}"
+
+    job = client.load_table_from_dataframe(df, table_ref)  # Load data
+    job.result()  # Wait for the job to complete
+    print(f"Data loaded into {table_id}")
+
+def upload_to_bigquery(data, table_id):
+    time_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print("        Rebuilding Data Table in BigQuery (" + time_now + ")")
+
+    # Initialize BigQuery client using default credentials
+    client = bigquery.Client(project=project, credentials=credentials)
+
+    project_id = "api-integrations-412107"
+    dataset_id = "leavers_dashboard"
+
+    delete_table_data(project_id, dataset_id, table_id,client)
+    load_data(data, project_id, dataset_id, table_id,client)
 
 def looker_data_set(cascade):    
     print ("Arranging Data for export to Looker")
     print (".........")
     df = pd.DataFrame(cascade)
 
-    functions.classify_jobs(df,'HierarchyLevel3')
-    functions.voluntary(df,'LeaverReason')
+    classify_jobs(df,'HierarchyLevel3')
+    voluntary(df,'LeaverReason')
 
-    df['LastHouse'] = df.apply(functions.extract_last_house, axis=1)
+    df['LastHouse'] = df.apply(extract_last_house, axis=1)
     df.columns = df.columns.str.replace(' ', '')                                                                  #Removes all spaces for uploading to bigQuery
     
     df['Payroll'] = df['Payroll'].str.replace(' ', '')
    
-    #insert the payroll mapping here when API back up
-
     df['HierarchyLevel4'] = df['HierarchyLevel4'].str.replace(' ', '')
     df['HierarchyLevel5'] = df['HierarchyLevel5'].str.replace(' ', '')
     df['HierarchyLevel5'] = df['HierarchyLevel5'].str.replace('()', '')
     df['HierarchyLevel5'] = df['HierarchyLevel5'].str.replace(')', '')
     df['HierarchyLevel5'] = df['HierarchyLevel5'].str.replace('/', '')
 
-    df['Payroll'] = df['Payroll'].map(constants.payroll_conversion)  
+    payroll_conversion_str = get_secrets("payroll_conversion")
+    payroll_conversion = ast.literal_eval(payroll_conversion_str)
+
+    df['Payroll'] = df['Payroll'].map(payroll_conversion)  
 
     df['EmployeeId'] = pd.to_numeric(df['EmployeeId'], errors='coerce').astype('Int64')
     df['LOS'] = pd.to_numeric(df['LOS'], errors='coerce').astype('Int64')
@@ -577,12 +681,12 @@ def looker_data_set(cascade):
                 if df[col].dt.tz is not None:
                     df[col] = df[col].dt.tz_localize(None)
         
-        file_path_csv = os.path.join(constants.dataDropCsv,"Extra Cols.csv")
+        file_path_csv = data_store / "Extra Cols.csv"
 
         df.to_csv(file_path_csv, index=False)
     
     if gcloud:
-        functions.upload_to_bigquery(df,"staff_data")
+        upload_to_bigquery(df,"staff_data")
 
     return df
 
@@ -618,26 +722,22 @@ if __name__ == "__main__":
 
 
     if testing is False:
-        hierarchyNodes                          = hierarchy_nodes()
-        cascade_responses                       = GET_workers_cascade()
-        cascade_jobs                            = GET_jobs_cascade()
-        cascade_jobs_filter                     = filter_latest_jobs(cascade_jobs)
-        cascade_data                            = rearrange_cascade(cascade_responses,cascade_jobs_filter)
-        sys.exit()
+        hierarchyNodes          = hierarchy_nodes()
+        cascade_responses       = GET_workers_cascade()
+        cascade_jobs            = GET_jobs_cascade()
+        cascade_jobs_filter     = filter_latest_jobs(cascade_jobs)
+        cascade_data            = rearrange_cascade(cascade_responses,cascade_jobs_filter)
         output_cascade()
 
     if testing is True:
         print ("Loading from saved file")
-        hierarchyNodes = import_data("000 - Hierarchy Nodes.json")
-        cascade_responses = import_data("001 - cascade personal.json")
-        cascade_jobs = import_data("002a - Cascade jobs.json")
-        cascade_jobs_filter = import_data("002b - Cascade jobs - Latest.json")
-        cascade_data                            = rearrange_cascade(cascade_responses,cascade_jobs_filter)
-        sys.exit()
+        hierarchyNodes          = import_data("000 - Hierarchy Nodes.json")
+        cascade_responses       = import_data("001 - cascade personal.json")
+        cascade_jobs            = import_data("002a - Cascade jobs.json")
+        cascade_jobs_filter     = import_data("002b - Cascade jobs - Latest.json")
+        cascade_data            = import_data("004 - Cascade reordered.json")
         output_cascade()    
     
     
-    
-    looker_data                                                                     = looker_data_set(cascade_data)     
-
+    looker_data = looker_data_set(cascade_data)     
 

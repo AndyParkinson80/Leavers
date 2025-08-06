@@ -11,3 +11,4 @@ Pathlib
 pyarrow
 db-dtypes
 google-api-python-client
+pandas_gbq

@@ -8,4 +8,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 RUN mkdir -p /output
 
-CMD ["python", "integration.py"]
+CMD ["python", "main.py"]
