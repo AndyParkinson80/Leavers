@@ -1,29 +1,30 @@
-from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
-import requests
+# Standard library
+import os
+import re
+import ast
 import math
 import time
-import os
 import json
-import pandas as pd
-import sys
-from pathlib import Path
 import tempfile
+from pathlib import Path
 from collections import defaultdict
-import ast
+from datetime import datetime, timedelta
+
+# Third-party libraries
+import requests
+import pandas as pd
 import openpyxl
-import re
-import pandas_gbq
+from dateutil.relativedelta import relativedelta
 
+# Google Cloud SDK
 from google.cloud import secretmanager, bigquery
-
 from google.auth import default
 from google.auth.exceptions import DefaultCredentialsError
 from google.oauth2 import service_account
 
 debug = True                                                           
 Data_export = False                                                                 #True --> export data to data store
-testing = False
+testing = True
 gcloud = True                                                                      #True --> Pulls all data from ADP WFN, not just current
 
 directory = Path(__file__).resolve().parent
@@ -275,7 +276,7 @@ def hierarchy_nodes():
     return hierarchyNodes
 
 #---------- Downloads current leavers data
-def link_cascadeId_to_DisplayId(cascade_records):
+def link_cascadeId_to_DisplayId(cascade_responses):
     id_to_display = {}
     for record in cascade_responses:
         id_to_display[record["Id"]] = record.get("DisplayId", "")
@@ -732,5 +733,4 @@ if __name__ == "__main__":
         cascade_data            = import_data("004 - Cascade reordered.json")
     
     output_cascade()   
-    looker_data = looker_data_set(cascade_data)     
-
+    looker_data = looker_data_set(cascade_data)
