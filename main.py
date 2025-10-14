@@ -22,9 +22,9 @@ from google.auth import default
 from google.auth.exceptions import DefaultCredentialsError
 from google.oauth2 import service_account
 
-debug = True                                                           
+debug = False                                                           
 Data_export = False                                                                 #True --> export data to data store
-testing = True
+testing = False
 gcloud = True                                                                      #True --> Pulls all data from ADP WFN, not just current
 
 directory = Path(__file__).resolve().parent
