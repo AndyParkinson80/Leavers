@@ -41,54 +41,35 @@ first_day_of_this_year = today.replace(day=1, month=1, hour=0, minute=0, second=
 formatted_first_day = first_day_of_this_year.strftime("%Y-%m-%dT00:00:00Z")
 
 #---------- Create authentification tokens
-def google_auth():
-    """
-    Authenticate with Google Cloud and return credentials and project ID.
-        First tries to use Application Default Credentials (ADC).
-        If that fails, uses service account credentials from GOOGLE_CLOUD_SECRET environment variable.
-    Returns:
-        tuple: (credentials, project_id)        
-    Raises:
-        Exception: If both authentication methods fail
-    """
+def googleAuth():
     try:
-        # Try Application Default Credentials first
+        # 1. Try Application Default Credentials (Cloud Run)
         credentials, project_id = default()
-        print("Successfully authenticated using Application Default Credentials")
+        print("✅ Authenticated with ADC")
         return credentials, project_id
-         
+
     except DefaultCredentialsError:
-        print("Application Default Credentials not available, trying service account...")
-        
-        # Try service account from environment variable
+        print("⚠️ ADC not available, trying GOOGLE_CLOUD_SECRET env var...")
+
+        # 2. Codespaces (secret stored in env var)
         secret_json = os.getenv('GOOGLE_CLOUD_SECRET')
-        if not secret_json:
-            raise Exception("GOOGLE_CLOUD_SECRET environment variable not found")
-        
-        try:
-            # Parse the JSON credentials
+        if secret_json:
             service_account_info = json.loads(secret_json)
-            
-            # Create credentials from service account info
-            credentials = service_account.Credentials.from_service_account_info(
-                service_account_info
-            )
-            
-            # Extract project ID from service account info
+            credentials = service_account.Credentials.from_service_account_info(service_account_info)
             project_id = service_account_info.get('project_id')
-            if not project_id:
-                raise Exception("project_id not found in service account credentials")
-            
-            print("Successfully authenticated using service account credentials")
+            print("✅ Authenticated with service account from env var")
             return credentials, project_id
-            
-        except json.JSONDecodeError:
-            raise Exception("Invalid JSON in GOOGLE_CLOUD_SECRET environment variable")
-        except Exception as e:
-            raise Exception(f"Failed to create service account credentials: {str(e)}")
-    
-    except Exception as e:
-        raise Exception(f"Authentication failed: {str(e)}")
+
+        # 3. Local dev (service account file path)
+        file_path = os.getenv("GCP")
+        if file_path and os.path.exists(file_path):
+            credentials = service_account.Credentials.from_service_account_file(file_path)
+            with open(file_path) as f:
+                project_id = json.load(f).get("project_id")
+            print("✅ Authenticated with service account from file")
+            return credentials, project_id
+
+        raise Exception("❌ No valid authentication method found")
 
 def get_secrets(secret_id):
     def access_secret_version(project_id, secret_id, version_id="latest"):
@@ -226,22 +207,22 @@ def api_call(api_url,api_headers,api_params=None):
    
     return api_response
 
-def get_payroll(hierarchyRecord):
+def get_payroll(hierarchyRecord,ID):
     payrolls_L2_str = get_secrets("payrolls_L2")
     payrolls_L2 = ast.literal_eval(payrolls_L2_str)
 
-    if hierarchyRecord.get('hierarchyLevel6') == "Self Employed Surveyors (0835)":
+    if any("Surveyors (" in str(hierarchyRecord.get(f'hierarchyLevel{i}') or '') for i in range(2, 7)):
         hierarchyRecord['payroll'] = 'Not on Payroll'
     elif hierarchyRecord.get('hierarchyLevel4') == "Lemac (0500)":
         hierarchyRecord['payroll'] = 'Lemac'
-    elif hierarchyRecord.get('hierarchyLevel3') == "Engineer Admin (935)":
+    elif hierarchyRecord.get('hierarchyLevel3') == "Engineer Admin (935)" and ID in {"8609","8906", "9050", "9215", "9912", "10542", "10612"}:   #Fr Engineer Admins before site move
         hierarchyRecord['payroll'] = 'Acorn UK'
     else:
         hierarchyLevel2 = hierarchyRecord.get('hierarchyLevel2')
         if hierarchyLevel2 in payrolls_L2:
             hierarchyRecord['payroll'] = payrolls_L2[hierarchyLevel2]
         else:
-            hierarchyRecord['payroll'] = None  # Set to None or a default value if no match found 
+            hierarchyRecord['payroll'] = None  # Set to None or a default value if no match found  
 
 #---------- create a list of hierarchy nodes
 
@@ -435,6 +416,7 @@ def rearrange_cascade(cascade_responses, cascade_jobs_filter):
 
     for entry in cascade_responses:
         Cascade_full = entry.get("Id")
+        Cascade_ID = entry.get("DisplayId")
         EndDate = entry.get("EmploymentLeftDate")
         KnownAs = entry.get("KnownAs", "")
         name = entry.get("FirstName", "")
@@ -488,12 +470,13 @@ def rearrange_cascade(cascade_responses, cascade_jobs_filter):
             hierarchy = parent_id
             if not hierarchy:
                 break
-    
-        get_payroll(hierarchyRecord)
-        
+           
         date_of_birth_str = entry.get("DateOfBirth")
         continuous_service_date_str = entry.get("ContinuousServiceDate")
         employment_left_date_str = entry.get("EmploymentLeftDate")
+
+        get_payroll(hierarchyRecord,Cascade_ID)
+
 
         date_of_birth = convert_date_format(date_of_birth_str)
         continuous_service_date = convert_date_format(continuous_service_date_str)
@@ -521,7 +504,7 @@ def rearrange_cascade(cascade_responses, cascade_jobs_filter):
         lm_path = id_to_lm_path.get(Cascade_full, "")
 
         cascade_reorder ={
-            "Employee Id": entry.get("DisplayId", ""),
+            "Employee Id": Cascade_ID,
             "Forename": KnownAs if KnownAs is not None else name,
             "Surname": entry.get("LastName", ""),
             "JobTitle": jobTitle,   
@@ -691,7 +674,7 @@ def looker_data_set(cascade):
 if __name__ == "__main__":
     #---------- Create authentification tokens
     try:
-        credentials, project = google_auth()
+        credentials, project = googleAuth()
         print(f"Authenticated successfully! Project ID: {project}\n")
     except Exception as e:
         print(f"Authentication error: {e}")
