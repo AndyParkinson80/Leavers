@@ -22,8 +22,8 @@ from google.auth import default
 from google.auth.exceptions import DefaultCredentialsError
 from google.oauth2 import service_account
 
-debug = False                                                           
-Data_export = False                                                                 #True --> export data to data store
+debug = True                                                           
+Data_export = True                                                                 #True --> export data to data store
 testing = False
 gcloud = True                                                                      #True --> Pulls all data from ADP WFN, not just current
 
@@ -393,7 +393,7 @@ def filter_latest_jobs(cascade_jobs):
         if employee_id:
             current_latest = employee_latest_jobs[employee_id]
             if (current_latest is None or 
-                job.get('LastModifiedOn', '') > current_latest.get('LastModifiedOn', '')):
+                job.get('StartDate', '') > current_latest.get('StartDate', '')):
                 employee_latest_jobs[employee_id] = job
 
     # Convert to list
